@@ -1,0 +1,169 @@
+---
+title: "ML Stellar Prediction"
+output: html_document
+---
+
+```{r}
+#My objective is to predict the type of a star: white dwarf, main sequence, supergiant, etc. I can do this by using physical properties such as temperature, luminosity, radius, and spectral class. This is a multi-class classification problem, and the goal is to train a model that accurately predicts a star’s classification based on these traits.
+library(tidyverse)
+library(caTools)
+library(randomForest)
+library(yardstick)
+library(tibble)
+library(dplyr)
+library(caret)
+```
+
+```{r}
+#240 observations, 7 predictors
+#Response variable: Star.type, categorical with 6 classes
+#Predictors include Temperature, Luminosity, Radius, AbsoluteMagnitude, Star.color, and Spectral.class
+star_data <- read.csv("stardataset.csv")
+str(star_data)
+head(star_data)
+
+star_data$Star.color <- as.factor(star_data$Star.color)
+star_data$Spectral.Class <- as.factor(star_data$Spectral.Class)
+star_data$Star.type <- as.factor(star_data$Star.type)
+```
+
+```{r}
+table(star_data$Star.type)
+summary(star_data)
+colSums(is.na(star_data))
+#There are no missing values in this dataset, so removing wasn't necessary
+sum(duplicated(star_data))
+#There are no duplicates either
+star_data <- star_data %>%
+  rename(
+    Temperature = Temperature..K.,
+    Luminosity = Luminosity.L.Lo.,
+    Radius = Radius.R.Ro.,
+    AbsoluteMagnitude = Absolute.magnitude.Mv.
+  )
+```
+
+#Correlation Heatmap
+```{r}
+numeric_vars <- star_data %>% select_if(is.numeric)
+cor_matrix <- cor(numeric_vars)
+heatmap(cor_matrix, main = "Correlation Heatmap")
+```
+
+#Exploratory Data Analysis (EDA)
+```{r}
+#Univariate distribution of each variable
+#Most stars are around 3000-7000 Kelvin, with fewer outliers (extremely hot or cool)
+ggplot(star_data, aes(x = Temperature)) + 
+  geom_histogram(bins = 30, fill = "skyblue") + 
+  labs(title = "Distribution of Star Temperatures", x = "Temperature (K)", y = "Count")
+
+#Bivariate
+ggplot(star_data, aes(x = Star.type, y = Radius, fill = Star.type)) +
+  geom_boxplot() +
+  labs(title = "Radius by Star Type", x = "Star Type", y = "Radius (Solar Radii)")
+
+ggplot(star_data, aes(x = Star.type, y = AbsoluteMagnitude, fill = Star.type)) +
+  geom_boxplot() +
+  labs(title = "Magnitude by Star Type", x = "Star Type", y = "Absolute Magnitude")
+
+ggplot(star_data, aes(x = Star.type, y = Luminosity, fill = Star.type)) + 
+  geom_boxplot() + 
+  labs(title = "Luminosity by Star Type", x = "Star Type", y = "Luminosity")
+
+#Class balance bar plot
+ggplot(star_data, aes(x = Star.type, fill = Star.type)) +
+  geom_bar() +
+  labs(title = "Class Distribution of Star Types", x = "Star Type", y = "Count")
+
+#Multivariate
+ggplot(star_data, aes(x = Temperature, y = Luminosity, color = Star.type)) + 
+  geom_point() +
+  labs(title = "Luminosity vs Temperature by Star Type")
+#The clustering by star type shows that the features correlate with Star.type
+```
+
+#Train-Test split
+```{r}
+#I chose Random Forest because it does good on classification tasks, handles non-linear relationships, and shows feature importance
+#I used a split of 70/30 train-test split
+set.seed(123)
+split <- sample.split(star_data$Star.type, SplitRatio = 0.7)
+train_set <- subset(star_data, split == TRUE)
+test_set <- subset(star_data, split == FALSE)
+```
+
+#Tune Model
+```{r}
+mtry_vals <- 2:6
+tuning_results <- data.frame(mtry = integer(), accuracy = numeric())
+
+for (m in mtry_vals) {
+  model <- randomForest(Star.type ~ ., data = train_set, ntree = 200, mtry = m)
+  preds <- predict(model, newdata = test_set)
+  acc <- mean(preds == test_set$Star.type)
+  tuning_results <- rbind(tuning_results, data.frame(mtry = m, accuracy = acc))
+}
+
+print(tuning_results)
+best_mtry <- tuning_results$mtry[which.max(tuning_results$accuracy)]
+#The best mtry value is 4
+```
+
+#Final Model
+```{r}
+rf_model <- randomForest(Star.type ~ ., data = train_set, ntree = 200, mtry = best_mtry, importance = TRUE)
+print(rf_model)
+
+#Random Forest assumes that individual trees are uncorrelated and built on random samples. It does not assume linearity or homoscedasticity, making it flexible for nonlinear classification. It assumes independence between observations and enough trees for stable averaging.
+
+results <- tibble(
+  truth = test_set$Star.type,
+  prediction = predictions
+)
+
+accuracy(results, truth = truth, estimate = prediction)
+selected_metrics <- metric_set(yardstick::precision, yardstick::recall, yardstick::f_meas)
+selected_metrics(results, truth = truth, estimate = prediction)
+
+print(selected_metrics)
+accuracy(results, truth = truth, estimate = prediction)
+#yardstick::precision(results, truth = truth, estimate = prediction, estimator = "macro")
+#yardstick::recall(results, truth = truth, estimate = prediction, estimator = "macro")
+#yardstick::f_meas(results, truth = truth, estimate = prediction, estimator = "macro")
+
+confusionMatrix(predictions, test_set$Star.type)
+
+varImpPlot(rf_model)
+
+#The most important features identified by the Random Forest model were Temperature, Luminosity, and Radius
+#This was expected because these features directly relate to the Hertzsprung–Russell diagram, the standard tool used in stellar classification
+```
+
+```{r}
+library(caret)
+
+train_sizes <- seq(0.1, 1.0, by = 0.1)
+train_accuracies <- c()
+test_accuracies <- c()
+
+set.seed(123)
+for (size in train_sizes) {
+  small_train <- train_set %>% slice_sample(prop = size)
+  model <- randomForest(Star.type ~ ., data = small_train, ntree = 200, mtry = best_mtry)
+  
+  train_preds <- predict(model, newdata = small_train)
+  train_acc <- mean(train_preds == small_train$Star.type)
+  
+  test_preds <- predict(model, newdata = test_set)
+  test_acc <- mean(test_preds == test_set$Star.type)
+  
+  train_accuracies <- c(train_accuracies, train_acc)
+  test_accuracies <- c(test_accuracies, test_acc)
+}
+
+plot(train_sizes * 100, train_accuracies, type = "o", col = "blue", ylim = c(0, 1),
+     xlab = "Training Set Size (%)", ylab = "Accuracy", main = "Learning Curve")
+lines(train_sizes * 100, test_accuracies, type = "o", col = "red")
+legend("bottomright", legend = c("Train", "Test"), col = c("blue", "red"), lty = 1)
+```
