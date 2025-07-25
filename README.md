@@ -4,3 +4,11 @@ The project focuses on building a machine learning classification model to predi
 
 Key Steps
 * Cleaned and renamed features
+* Dataset from Kaggle, no missing or duplicates
+* Conducted Exploratory Data Analysis with univariate, bivariate, and multivariate visualizations
+* Tuned the model using mtry parameter
+
+Results
+* Achieved high scoring metrics (precision, recall, accuracy, f1 score) ~ 98%
+* Found that the stellar classification is correlated to the Hertzsprung–Russell diagram
+* The model confirms a key astrophysics relationship
